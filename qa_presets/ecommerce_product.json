@@ -1,0 +1,148 @@
+{
+  "id": "ecommerce_product",
+  "name": "Ecommerce Product Image QA",
+  "version": "1.0.0",
+  "scope": "ecommerce_product_listing_images",
+  "description": "Business-level visual QA checklist for ecommerce product listing images. Intended for upper-layer Skills or vision QA providers, not hardcoded gateway behavior.",
+  "extends": "basic",
+  "blocking_policy": "warn_only_unless_user_or_skill_marks_blocking",
+  "auto_retry_policy": "never_retry_quality_warnings_without_user_confirmation",
+  "recommended_inputs": [
+    "generated_image",
+    "original_product_reference_image_optional",
+    "product_brief",
+    "intended_image_slot",
+    "platform_rules_optional"
+  ],
+  "severity_scale": {
+    "pass": "No visible issue.",
+    "warning": "Usable but should be shown to the user with a caution.",
+    "severe_warning": "Likely unsuitable; ask user whether to regenerate.",
+    "fail": "Reserved for upper-layer policies; gateway itself should not fail successful generation because of visual QA."
+  },
+  "checks": [
+    {
+      "id": "product_identity_consistency",
+      "severity": "severe_warning",
+      "category": "product_consistency",
+      "description": "Generated product should preserve the original product's shape, color, material, key structure, logo/brand placement if present, and distinctive details.",
+      "examples": [
+        "Handle count or shape changed",
+        "Bottle cap style changed",
+        "Fabric texture or color deviates from reference",
+        "Logo disappears, mutates, or moves"
+      ],
+      "suggestion": "If identity is materially changed, suggest regenerating that image with stronger reference/product-lock instructions."
+    },
+    {
+      "id": "product_deformation",
+      "severity": "severe_warning",
+      "category": "product_quality",
+      "description": "Product should not be warped, melted, duplicated unexpectedly, asymmetrical in impossible ways, or physically implausible.",
+      "examples": [
+        "Crooked rim on a cup",
+        "Extra seams or handles",
+        "Distorted zipper, button, nozzle, cap, or label"
+      ]
+    },
+    {
+      "id": "main_subject_clarity",
+      "severity": "warning",
+      "category": "composition",
+      "description": "Main product should be clearly visible, not overly cropped, blocked, blurry, tiny, or hidden by props."
+    },
+    {
+      "id": "image_slot_fit",
+      "severity": "warning",
+      "category": "listing_strategy",
+      "description": "Image should match its intended ecommerce slot, such as main image, lifestyle scene, feature callout, size comparison, package contents, SKU/color variant, or detail close-up.",
+      "slot_guidance": {
+        "main": "Clean background, product centered, minimal distractions, no unsupported props.",
+        "lifestyle": "Scene should support buyer imagination without changing product identity.",
+        "feature": "Feature should be visually obvious and not contradicted by the image.",
+        "detail": "Close-up should preserve texture and structural details.",
+        "sku": "Variant color/style must match the requested SKU."
+      }
+    },
+    {
+      "id": "text_and_typography",
+      "severity": "severe_warning",
+      "category": "text_quality",
+      "description": "Any visible text should be intentional, legible, correctly spelled, and not garbled. If the prompt requested no text, generated text is a warning.",
+      "examples": [
+        "Misspelled feature callout",
+        "Fake brand text",
+        "Unreadable label",
+        "Random watermark-like characters"
+      ]
+    },
+    {
+      "id": "claim_consistency",
+      "severity": "severe_warning",
+      "category": "compliance",
+      "description": "Image should not visually imply unsupported claims, certifications, medical effects, waterproof/fireproof properties, or impossible performance unless supplied by product brief."
+    },
+    {
+      "id": "human_body_and_hands",
+      "severity": "warning",
+      "category": "human_rendering",
+      "description": "If humans appear, hands, fingers, body posture, face, and product interaction should look natural and non-distracting.",
+      "escalate_to_severe_when": [
+        "Hands obscure the product",
+        "Finger/body deformation is obvious",
+        "Human interaction misrepresents product size or usage"
+      ]
+    },
+    {
+      "id": "scale_and_size_plausibility",
+      "severity": "warning",
+      "category": "product_consistency",
+      "description": "Product scale should be plausible relative to hands, furniture, packaging, or other props."
+    },
+    {
+      "id": "background_and_props",
+      "severity": "warning",
+      "category": "composition",
+      "description": "Background and props should not create confusion about included items, product category, target audience, or package contents."
+    },
+    {
+      "id": "platform_risk",
+      "severity": "warning",
+      "category": "platform_policy",
+      "description": "Flag likely marketplace risks such as watermarks, competitor logos, misleading badges, explicit content, unsafe usage scenes, or forbidden before/after claims."
+    },
+    {
+      "id": "visual_polish",
+      "severity": "warning",
+      "category": "aesthetic_quality",
+      "description": "Lighting, shadows, reflections, resolution, edge quality, and color balance should be commercially acceptable."
+    }
+  ],
+  "output_schema": {
+    "status": "pass | warning | severe_warning",
+    "issues": [
+      {
+        "check_id": "string",
+        "severity": "warning | severe_warning",
+        "category": "string",
+        "message": "string",
+        "suggestion": "string optional",
+        "evidence": "string optional"
+      }
+    ],
+    "recommended_user_action": "accept | review | ask_to_regenerate_specific_images"
+  },
+  "agent_guidance": {
+    "default_user_message": "图片已生成；以下是可选质检提醒，不会自动重试。若需要，我可以按编号重试。",
+    "retry_phrase_examples": [
+      "重试3图",
+      "重试3、7图",
+      "保留1、2、4，其余重试"
+    ],
+    "must_not": [
+      "Do not auto-retry solely because ecommerce QA reports a visual warning.",
+      "Do not silently discard successful images.",
+      "Do not claim product identity is verified unless reference-image comparison was actually performed."
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "id": "basic",
+  "name": "Basic Technical QA",
+  "version": "1.0.0",
+  "scope": "generic_image_output",
+  "description": "Provider-agnostic technical checks for generated image files. This preset is safe as the gateway default.",
+  "blocking_policy": "never_block_generation",
+  "auto_retry_policy": "generation_failures_only",
+  "checks": [
+    {
+      "id": "output_exists",
+      "severity": "severe_warning",
+      "category": "file_integrity",
+      "description": "Output path exists and is readable."
+    },
+    {
+      "id": "image_decodable",
+      "severity": "severe_warning",
+      "category": "file_integrity",
+      "description": "Image bytes can be decoded and format can be detected."
+    },
+    {
+      "id": "actual_size_present",
+      "severity": "warning",
+      "category": "image_metadata",
+      "description": "Actual width and height are detected and recorded."
+    },
+    {
+      "id": "aspect_ratio_matches_request",
+      "severity": "warning",
+      "category": "aspect_ratio",
+      "description": "Actual image aspect ratio approximately matches the requested size ratio. Exact pixel dimensions are not required."
+    }
+  ],
+  "agent_guidance": {
+    "on_warning": "Deliver the image and mention technical risk if relevant.",
+    "on_severe_warning": "Deliver only if usable, and suggest user-confirmed regeneration.",
+    "must_not": [
+      "Do not automatically retry solely because this QA preset reports a warning.",
+      "Do not resize, crop, or convert generated images as part of QA."
+    ]
+  }
+}

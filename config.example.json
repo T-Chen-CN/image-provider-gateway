@@ -1,0 +1,25 @@
+[
+  {
+    "id": "01-main",
+    "prompt": "A clean ecommerce main image of a plain white ceramic mug on a light gray background. No text. Centered product.",
+    "size": "1024x1024",
+    "quality": "low",
+    "provider": "openai_images",
+    "model": "gpt-image-2",
+    "mode": "generate",
+    "qa_preset": "ecommerce_product",
+    "output_name": "01-main"
+  },
+  {
+    "id": "02-reference-scene",
+    "prompt": "Keep the input product identity unchanged. Place it in a clean breakfast table scene. No text.",
+    "size": "1024x1024",
+    "quality": "low",
+    "provider": "openai_images",
+    "model": "gpt-image-2",
+    "mode": "edit",
+    "qa_preset": "ecommerce_product",
+    "input_images": ["/absolute/path/to/reference-product.png"],
+    "output_name": "02-reference-scene"
+  }
+]
