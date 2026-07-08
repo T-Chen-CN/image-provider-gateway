@@ -1,202 +1,196 @@
-# image-provider-gateway
+# Image Provider Gateway
 
-A small Agent-facing image generation gateway. Agents submit normalized image tasks; this tool handles provider calls, concurrent batch generation, retries, image saving, manifest/events, and non-blocking QA warnings.
+A small Agent-friendly gateway for OpenAI-compatible image generation APIs.
 
-## Provider Contract
+It gives an Agent one stable interface for single-image generation, image-to-image/edit tasks, and 9-image ecommerce batches, while keeping provider credentials and runtime endpoints outside the repository.
 
-The first implementation targets OpenAI-compatible Images APIs:
+## Why This Exists
 
-- Text-to-image endpoint: `POST {IMAGE_API_BASE_URL}/images/generations`
-- Image-to-image / edit endpoint: `POST {IMAGE_API_BASE_URL}/images/edits`
-- Model default: `gpt-image-2`
-- Response image field: `data[0].b64_json`
+Ecommerce image production usually needs more than a one-off image API call:
 
-Provider-specific host names should live in environment/config, not in Agent prompts or request schemas.
+- generate or edit multiple images in parallel
+- keep product-reference images attached to edit tasks
+- retry failed image jobs without rerunning successful ones
+- deliver successful images first while failed items retry
+- record manifests and event logs for traceability
+- separate technical QA from business/visual QA
 
-Observed behavior from the tested OpenAI-compatible provider:
+This gateway handles that execution layer so higher-level AgentSkills can focus on product strategy, prompts, QA rules, and user delivery.
 
-- `size` controls aspect ratio / generation tier, not exact final pixels.
-- `format` is not required and is not relied on.
-- Output images are delivered as generated. The tool does not resize, crop, or convert images.
+## Core Features
 
-## Environment
+- Text-to-image via OpenAI-compatible Images API generation endpoint.
+- Image-to-image/edit via OpenAI-compatible Images API edit endpoint.
+- Single-image and batch execution.
+- Batch concurrency, including `concurrency=9` for ecommerce 9-image sets.
+- Selective retry for failed generation/edit jobs.
+- Stable output paths, `manifest.json`, and `events.jsonl`.
+- Basic technical QA for saved image metadata and aspect ratio checks.
+- Pluggable QA preset files for business-specific review guidance.
+- No committed API keys, provider base URLs, generated images, or local secrets.
+
+## Repository Layout
+
+```text
+image_provider_gateway/
+  cli.py
+  gateway.py
+  image_probe.py
+  manifest.py
+  models.py
+  qa_check.py
+  providers/
+    openai_images.py
+qa_presets/
+  basic.json
+  ecommerce_product.json
+tests/
+  test_batch_retry.py
+config.example.json
+ACCEPTANCE_TESTS.md
+```
+
+## Runtime Configuration
+
+The gateway reads credentials and provider endpoint configuration at runtime.
 
 ```bash
 export IMAGE_API_KEY="<your-provider-api-key>"
 export IMAGE_API_BASE_URL="<your-provider-base-url>"
 ```
 
-Never store API keys in request JSON, manifests, or events.
+Do not commit real values. The repository intentionally contains no real provider URL or API key.
 
-## Single Text-to-Image
+## Request Model
 
-```bash
-PYTHONPATH=. python3 -m image_provider_gateway.cli single \
-  --id 01-main \
-  --prompt "A clean ecommerce product photo of a white ceramic mug. No text." \
-  --size 1024x1024 \
-  --quality low \
-  --base-url "$IMAGE_API_BASE_URL" \
-  --output-dir outputs/manual-test/images \
-  --qa
-```
-
-## Single Image-to-Image / Edit
-
-```bash
-PYTHONPATH=. python3 -m image_provider_gateway.cli single \
-  --id 02-reference-scene \
-  --mode edit \
-  --input-image /absolute/path/to/reference-product.png \
-  --prompt "Keep the input product identity unchanged. Place it in a clean breakfast table scene. No text." \
-  --size 1024x1024 \
-  --quality low \
-  --base-url "$IMAGE_API_BASE_URL" \
-  --output-dir outputs/manual-test/images \
-  --qa
-```
-
-## Batch Generation
-
-```bash
-PYTHONPATH=. python3 -m image_provider_gateway.cli batch \
-  --requests config.example.json \
-  --base-url "$IMAGE_API_BASE_URL" \
-  --output-dir outputs \
-  --concurrency 9 \
-  --retry 2
-```
-
-Batch requests can mix `mode: "generate"` and `mode: "edit"` tasks. Image-to-image tasks use `input_images`.
-
-Batch behavior:
-
-1. First round runs up to `concurrency` image tasks in parallel.
-2. Each image succeeds or fails independently.
-3. First-round successes are recorded via `partial_delivery_ready`; the Agent should deliver those images immediately.
-4. Failed generation/edit tasks are retried automatically up to `retry` times.
-5. Retry successes are appended and can be delivered later.
-6. Final failures remain in `manifest.json` with HTTP/provider/content error details.
-7. QA warnings never trigger automatic retries.
-
-## Request Schema
+Each image request uses a provider-neutral schema:
 
 ```json
 {
   "id": "01-main",
-  "prompt": "...",
-  "size": "1024x1024",
-  "quality": "low",
-  "provider": "openai_images",
-  "model": "gpt-image-2",
-  "mode": "generate",
-  "input_images": [],
-  "output_name": "01-main",
-  "metadata": {}
-}
-```
-
-For image-to-image:
-
-```json
-{
-  "id": "02-reference-scene",
-  "prompt": "Keep the input product identity unchanged...",
+  "prompt": "Create a clean ecommerce hero image...",
   "size": "1024x1024",
   "quality": "low",
   "provider": "openai_images",
   "model": "gpt-image-2",
   "mode": "edit",
-  "input_images": ["/absolute/path/to/reference-product.png"],
-  "output_name": "02-reference-scene"
+  "input_images": ["/path/to/reference-product.png"],
+  "qa_preset": "ecommerce_product",
+  "output_name": "01-main",
+  "metadata": {
+    "slot": "main"
+  }
 }
 ```
 
-Recommended `size` values for the tested provider family:
+`mode` can be:
 
-- `1024x1024`
-- `1536x1024`
-- `1024x1536`
-- `2048x2048`
-- `2048x1152`
-- `3840x2160`
-- `2160x3840`
-- `auto`
+- `generate`: text-to-image.
+- `edit`: image-to-image/edit with one or more `input_images`.
 
-Custom sizes should follow provider rules when available: max side <= 3840px, both sides multiples of 16px, long/short ratio <= 3:1, total pixels between 655360 and 8294400.
+## CLI Usage
 
-## Output Structure
+Run a single text-to-image request:
+
+```bash
+PYTHONPATH=. python3 -m image_provider_gateway.cli single \
+  --prompt "Create a clean ecommerce product image" \
+  --output-dir outputs/demo-single \
+  --output-name 01-main
+```
+
+Run an image-to-image/edit request:
+
+```bash
+PYTHONPATH=. python3 -m image_provider_gateway.cli single \
+  --mode edit \
+  --input-image /path/to/reference-product.png \
+  --prompt "Preserve the exact product and place it in a bright kitchen scene" \
+  --output-dir outputs/demo-edit \
+  --output-name 02-lifestyle \
+  --qa-preset ecommerce_product
+```
+
+Run a batch from JSON:
+
+```bash
+PYTHONPATH=. python3 -m image_provider_gateway.cli batch \
+  --requests config.example.json \
+  --output-dir outputs/demo-batch \
+  --concurrency 9 \
+  --retry 2
+```
+
+You can also pass `--base-url` and `--api-key-env`, but environment variables are recommended for normal use.
+
+## Output Layout
+
+A batch run creates a job directory:
 
 ```text
 outputs/<job_id>/
   images/
     01-main.png
-    02-reference-scene.png
+    02-lifestyle.png
   manifest.json
   events.jsonl
 ```
 
-`manifest.json` records requests, ordered results, retry pending IDs, and all attempts. `events.jsonl` records stage events such as `batch_started`, `image_succeeded`, `image_failed`, `partial_delivery_ready`, `retry_started`, `qa_warning`, and `batch_completed`.
+`manifest.json` stores final request/result metadata. `events.jsonl` records execution events such as:
+
+- `batch_started`
+- `image_succeeded`
+- `image_failed`
+- `partial_delivery_ready`
+- `retry_started`
+- `qa_warning`
+- `batch_completed`
+
+## Retry Policy
+
+Automatic retry applies to technical generation/edit failures, such as:
+
+- timeout
+- HTTP 408 / 429 / 5xx
+- provider JSON error
+- missing `b64_json`
+- invalid image bytes
+- missing edit input image
+
+Successful images are not rerun. Visual QA warnings do not trigger automatic retries.
 
 ## QA Presets
 
-QA is split into generic gateway checks and optional business presets. Presets live in `qa_presets/` so upper-layer Skills can select or extend them without hardcoding business rules into the gateway.
+Built-in gateway QA is intentionally generic and technical. Business rules live in separate preset files:
 
-Available presets:
+- `qa_presets/basic.json`: output file, decodable image, detected size, aspect ratio.
+- `qa_presets/ecommerce_product.json`: product identity, deformation, slot fit, claims, text, props, and platform risk.
 
-- `qa_presets/basic.json`: generic technical QA for file existence, decodability, detected size, and aspect ratio. This is the gateway default.
-- `qa_presets/ecommerce_product.json`: ecommerce product listing QA checklist for product identity, deformation, text, slot fit, platform risk, and visual polish. This is intended for upper-layer Skills or vision QA providers.
+Higher-level AgentSkills can read a preset and run their own vision QA process. The gateway records the selected `qa_preset` but does not hardcode ecommerce business logic.
 
-Request field:
+## Validation
 
-```json
-{
-  "qa_preset": "basic"
-}
+Compile the package:
+
+```bash
+python3 -m compileall image_provider_gateway
 ```
 
-For ecommerce generation, upper-layer Skills can request:
+Validate example JSON:
 
-```json
-{
-  "qa_preset": "ecommerce_product"
-}
+```bash
+python3 -m json.tool config.example.json >/dev/null
+python3 -m json.tool qa_presets/basic.json >/dev/null
+python3 -m json.tool qa_presets/ecommerce_product.json >/dev/null
 ```
 
-Important boundary:
+Run the mock retry test with the standard library or adapt it to your test runner.
 
-- The gateway built-in QA only performs basic technical checks.
-- Business/visual QA should read preset files and run in an upper-layer Skill or external QA provider.
-- QA warnings never trigger automatic retries. Only generation/edit failures are retried automatically.
-- If visual QA flags an image, the Agent should deliver the image with a warning and ask whether to regenerate specific image IDs.
+See `ACCEPTANCE_TESTS.md` for expected behavior.
 
-Generation/edit failures that can auto-retry:
+## Security Notes
 
-- HTTP timeout / `408` / `429` / `5xx`
-- Provider JSON error
-- Missing `b64_json`
-- Invalid or unparseable image bytes
-- Missing input image for edit tasks
-
-Ecommerce visual risks covered by the preset:
-
-- Product identity mismatch
-- Product deformation
-- Main subject clarity
-- Image slot fit: main, lifestyle, feature, detail, SKU
-- Text/typography errors
-- Unsupported visual claims
-- Human/body/hand deformation
-- Scale plausibility
-- Background/prop confusion
-- Platform policy risk
-- Visual polish
-
-Recommended Agent wording:
-
-```text
-已生成 7/9 张，先发成功图。
-第 3、8 张生成失败：timeout，正在自动重试。
-第 5 图可能存在文案错字，第 7 图可能有人物手部变形。建议回复“重试5图”或“重试5、7图”。
-所有当前生图任务完成后，我会按你的确认重新生成对应图片。
-```
+- Do not commit `.env` files.
+- Do not commit generated images unless they are intentional examples.
+- Do not commit real provider endpoints if they are private infrastructure.
+- Do not put API keys or secret file paths into manifests or request JSON.
