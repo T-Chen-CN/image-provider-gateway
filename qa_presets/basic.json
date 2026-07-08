@@ -4,6 +4,20 @@
   "version": "1.0.0",
   "scope": "generic_image_output",
   "description": "Provider-agnostic technical checks for generated image files. This preset is safe as the gateway default.",
+  "selection_metadata": {
+    "use_when": [
+      "The user only needs provider-agnostic technical validation.",
+      "The task is exploratory, creative, or not tied to a domain-specific visual QA checklist.",
+      "No available domain preset clearly matches the user's stated acceptance criteria."
+    ],
+    "avoid_when": [
+      "The user explicitly asks for a domain-specific visual review that another available preset covers."
+    ],
+    "requires_inputs": [
+      "generated_image"
+    ],
+    "agent_selection_note": "Prefer this preset as the safe fallback after reading available preset metadata. Do not infer domain QA solely from broad task labels."
+  },
   "blocking_policy": "never_block_generation",
   "auto_retry_policy": "generation_failures_only",
   "checks": [

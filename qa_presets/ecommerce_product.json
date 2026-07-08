@@ -5,6 +5,29 @@
   "scope": "ecommerce_product_listing_images",
   "description": "Business-level visual QA checklist for ecommerce product listing images. Intended for upper-layer Skills or vision QA providers, not hardcoded gateway behavior.",
   "extends": "basic",
+  "selection_metadata": {
+    "use_when": [
+      "The user needs ecommerce product listing image quality review.",
+      "The user asks to preserve product identity against reference images.",
+      "The user asks for marketplace/listing suitability, commercial polish, platform risk, claim consistency, package/SKU accuracy, or product-image slot fit."
+    ],
+    "avoid_when": [
+      "The task only needs generic technical validation.",
+      "The image task is not a product listing or does not need ecommerce acceptance criteria.",
+      "Required product context is missing and the Agent cannot state safe assumptions."
+    ],
+    "requires_inputs": [
+      "generated_image",
+      "product_brief_or_stated_product_facts",
+      "intended_image_slot_or_user_acceptance_criteria"
+    ],
+    "optional_inputs": [
+      "original_product_reference_image",
+      "platform_rules",
+      "SKU_variant_list"
+    ],
+    "agent_selection_note": "Select this preset only after comparing its metadata and checks with the user's actual acceptance criteria. Do not choose it merely because the surrounding Skill is ecommerce-related."
+  },
   "blocking_policy": "warn_only_unless_user_or_skill_marks_blocking",
   "auto_retry_policy": "never_retry_quality_warnings_without_user_confirmation",
   "recommended_inputs": [
