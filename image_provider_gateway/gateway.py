@@ -118,7 +118,7 @@ def _run_round(
     requests: list[ImageRequest],
     output_dir: Path,
     api_key: str | None,
-    base_url: str,
+    base_url: str | None,
     timeout_seconds: int,
     max_workers: int,
     attempt: int,
@@ -139,7 +139,7 @@ def _run_round(
     return results
 
 
-def _provider_for(request: ImageRequest, api_key: str | None, base_url: str, timeout_seconds: int) -> OpenAIImagesProvider:
+def _provider_for(request: ImageRequest, api_key: str | None, base_url: str | None, timeout_seconds: int) -> OpenAIImagesProvider:
     if request.provider != "openai_images":
         raise ValueError(f"unsupported provider: {request.provider}")
     key = api_key or os.environ.get("IMAGE_API_KEY")

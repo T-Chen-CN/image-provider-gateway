@@ -29,7 +29,7 @@ def main() -> int:
     single.add_argument("--qa-preset", default="basic", help="QA preset name to record/use for built-in basic technical QA")
     single.add_argument("--base-url", default=None, help="Provider base URL; defaults to IMAGE_API_BASE_URL")
     single.add_argument("--api-key-env", default="IMAGE_API_KEY")
-    single.add_argument("--timeout", type=int, default=600)
+    single.add_argument("--timeout", type=int, default=600, help="HTTP request timeout in seconds")
     single.add_argument("--qa", action="store_true")
 
     batch = subparsers.add_parser("batch", help="Generate images from a JSON request file")
@@ -39,7 +39,7 @@ def main() -> int:
     batch.add_argument("--retry", type=int, default=2)
     batch.add_argument("--base-url", default=None, help="Provider base URL; defaults to IMAGE_API_BASE_URL")
     batch.add_argument("--api-key-env", default="IMAGE_API_KEY")
-    batch.add_argument("--timeout", type=int, default=600)
+    batch.add_argument("--timeout", type=int, default=600, help="HTTP request timeout in seconds for each image request")
     batch.add_argument("--job-id")
     batch.add_argument("--no-qa", action="store_true")
 
@@ -47,6 +47,9 @@ def main() -> int:
     api_key = os.environ.get(args.api_key_env)
     if not api_key:
         print(json.dumps({"ok": False, "error": f"{args.api_key_env} is required"}, ensure_ascii=False), file=sys.stderr)
+        return 2
+    if not args.base_url and not os.environ.get("IMAGE_API_BASE_URL"):
+        print(json.dumps({"ok": False, "error": "IMAGE_API_BASE_URL is required"}, ensure_ascii=False), file=sys.stderr)
         return 2
 
     if args.command == "single":

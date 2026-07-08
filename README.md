@@ -123,6 +123,10 @@ PYTHONPATH=. python3 -m image_provider_gateway.cli batch \
 
 You can also pass `--base-url` and `--api-key-env`, but environment variables are recommended for normal use.
 
+Supported `single` CLI options: `--prompt`, `--id`, `--size`, `--quality`, `--output-dir`, `--output-name`, `--model`, `--provider`, `--mode`, `--input-image`, `--qa-preset`, `--base-url`, `--api-key-env`, `--timeout`, and `--qa`.
+
+Supported `batch` CLI options: `--requests`, `--output-dir`, `--concurrency`, `--retry`, `--base-url`, `--api-key-env`, `--timeout`, `--job-id`, and `--no-qa`.
+
 ## Output Layout
 
 A batch run creates a job directory:
