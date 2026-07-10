@@ -10,12 +10,14 @@ from .manifest import EventLogger, write_json
 from .models import BatchResult, ImageRequest, ImageResult, QaResult
 from .providers.openai_images import OpenAIImagesProvider
 from .qa_check import qa_check_image
+from .validation import validate_batch_requests, validate_request, validate_safe_name
 
 
 RETRYABLE_ERRORS = {
     "http_error",
     "missing_b64_json",
     "invalid_image_bytes",
+    "provider_json_error",
     "timeout",
     "TimeoutError",
     "URLError",
@@ -30,6 +32,8 @@ def generate_image(
     timeout_seconds: int = 600,
     qa_enabled: bool = False,
 ) -> ImageResult:
+    validate_request(request)
+    _validate_positive_int(timeout_seconds, "timeout_seconds")
     provider = _provider_for(request, api_key=api_key, base_url=base_url, timeout_seconds=timeout_seconds)
     result = provider.generate(request, Path(output_dir))
     if result.ok and qa_enabled:
@@ -48,9 +52,12 @@ def generate_images_batch(
     qa_enabled: bool = True,
     job_id: str | None = None,
 ) -> BatchResult:
-    if not requests:
-        raise ValueError("requests must not be empty")
+    validate_batch_requests(requests)
+    _validate_positive_int(concurrency, "concurrency")
+    _validate_nonnegative_int(retry, "retry")
+    _validate_positive_int(timeout_seconds, "timeout_seconds")
     job_id = job_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
+    validate_safe_name(job_id, "job_id")
     root = Path(output_dir) / job_id
     images_dir = root / "images"
     events_path = root / "events.jsonl"
@@ -114,6 +121,16 @@ def generate_images_batch(
     return BatchResult(job_id=job_id, output_dir=root, results=ordered_results, manifest_path=manifest_path, events_path=events_path)
 
 
+def _validate_positive_int(value: object, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{field_name} must be a positive integer")
+
+
+def _validate_nonnegative_int(value: object, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")
+
+
 def _run_round(
     requests: list[ImageRequest],
     output_dir: Path,
@@ -127,16 +144,60 @@ def _run_round(
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
             executor.submit(
-                _provider_for(request, api_key=api_key, base_url=base_url, timeout_seconds=timeout_seconds).generate,
+                _execute_request,
                 request,
                 output_dir,
+                api_key,
+                base_url,
+                timeout_seconds,
                 attempt,
             ): request
             for request in requests
         }
         for future in concurrent.futures.as_completed(future_map):
-            results.append(future.result())
+            request = future_map[future]
+            try:
+                results.append(future.result())
+            except Exception as error:  # Defensive boundary: one task must never abort its batch.
+                results.append(_exception_result(request, attempt, error))
     return results
+
+
+def _execute_request(
+    request: ImageRequest,
+    output_dir: Path,
+    api_key: str | None,
+    base_url: str | None,
+    timeout_seconds: int,
+    attempt: int,
+) -> ImageResult:
+    try:
+        provider = _provider_for(request, api_key=api_key, base_url=base_url, timeout_seconds=timeout_seconds)
+        return provider.generate(request, output_dir, attempt)
+    except ValueError as error:
+        if str(error).startswith("unsupported provider"):
+            return _exception_result(request, attempt, error, "unsupported_provider")
+        raise
+
+
+def _exception_result(
+    request: ImageRequest,
+    attempt: int,
+    error: Exception,
+    error_name: str | None = None,
+) -> ImageResult:
+    return ImageResult(
+        ok=False,
+        id=request.id,
+        provider=request.provider,
+        model=request.model,
+        requested_size=request.size,
+        mode=request.mode,
+        attempt=attempt,
+        error=error_name or type(error).__name__,
+        provider_error={"message": str(error)},
+        metadata=request.metadata,
+    )
 
 
 def _provider_for(request: ImageRequest, api_key: str | None, base_url: str | None, timeout_seconds: int) -> OpenAIImagesProvider:
@@ -164,6 +225,7 @@ def _pending_result(request: ImageRequest) -> ImageResult:
         provider=request.provider,
         model=request.model,
         requested_size=request.size,
+        mode=request.mode,
         error="pending_or_interrupted",
         qa=QaResult(status="not_checked"),
     )

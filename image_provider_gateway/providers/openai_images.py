@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import mimetypes
 import time
@@ -12,6 +13,9 @@ from typing import Any
 
 from ..image_probe import aspect_ratio_ok, detect_image
 from ..models import ImageRequest, ImageResult
+
+
+FORMAT_SUFFIXES = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}
 
 
 class OpenAIImagesProvider:
@@ -38,6 +42,18 @@ class OpenAIImagesProvider:
         return self._send_json("/images/generations", payload, request, output_dir, attempt)
 
     def edit(self, request: ImageRequest, output_dir: Path, attempt: int = 1) -> ImageResult:
+        if not request.input_images:
+            return ImageResult(
+                ok=False,
+                id=request.id,
+                provider=self.name,
+                model=request.model,
+                requested_size=request.size,
+                mode=request.mode,
+                attempt=attempt,
+                error="missing_input_images",
+                metadata=request.metadata,
+            )
         fields = {
             "model": request.model,
             "prompt": request.prompt,
@@ -47,9 +63,23 @@ class OpenAIImagesProvider:
         if request.quality:
             fields["quality"] = request.quality
         files = []
-        for image_path in request.input_images:
-            path = Path(image_path)
-            files.append(("image", path.name, path.read_bytes(), mimetypes.guess_type(path.name)[0] or "application/octet-stream"))
+        try:
+            for image_path in request.input_images:
+                path = Path(image_path)
+                files.append(("image", path.name, path.read_bytes(), mimetypes.guess_type(path.name)[0] or "application/octet-stream"))
+        except OSError as error:
+            return ImageResult(
+                ok=False,
+                id=request.id,
+                provider=self.name,
+                model=request.model,
+                requested_size=request.size,
+                mode=request.mode,
+                attempt=attempt,
+                error=type(error).__name__,
+                provider_error={"message": str(error)},
+                metadata=request.metadata,
+            )
         return self._send_multipart("/images/edits", fields, files, request, output_dir, attempt)
 
     def _send_json(self, endpoint: str, payload: dict[str, Any], request: ImageRequest, output_dir: Path, attempt: int) -> ImageResult:
@@ -81,6 +111,7 @@ class OpenAIImagesProvider:
                 provider=self.name,
                 model=request.model,
                 requested_size=request.size,
+                mode=request.mode,
                 attempt=attempt,
                 error="missing_input_images",
                 metadata=request.metadata,
@@ -117,7 +148,12 @@ class OpenAIImagesProvider:
                 raw = response.read().decode("utf-8", "replace")
                 result.http_status = response.status
                 result.elapsed_seconds = round(time.time() - started_at, 2)
-                data = json.loads(raw)
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    result.error = "provider_json_error"
+                    result.provider_error = {"raw_preview": raw[:2000]}
+                    return result
                 first = (data.get("data") or [{}])[0]
                 b64_json = first.get("b64_json") or data.get("b64_json")
                 result.usage = data.get("usage") or first.get("usage")
@@ -125,18 +161,27 @@ class OpenAIImagesProvider:
                     result.error = "missing_b64_json"
                     result.provider_error = {"raw_preview": raw[:2000]}
                     return result
-                image_bytes = base64.b64decode(b64_json)
+                try:
+                    image_bytes = base64.b64decode(b64_json, validate=True)
+                except (binascii.Error, ValueError, TypeError) as error:
+                    result.error = "invalid_image_bytes"
+                    result.provider_error = {"message": str(error)}
+                    return result
                 output_name = request.output_name or request.id
-                output_path = output_dir / f"{output_name}.png"
-                output_path.write_bytes(image_bytes)
-                detected_format, width, height = detect_image(output_path)
+                temporary_path = output_dir / f".{output_name}.{uuid.uuid4().hex}.tmp"
+                temporary_path.write_bytes(image_bytes)
+                detected_format, width, height = detect_image(temporary_path)
                 result.ok = detected_format != "UNKNOWN" and width is not None and height is not None
-                result.path = str(output_path)
                 result.format_detected = detected_format
                 result.actual_size = f"{width}x{height}" if width and height else None
                 result.aspect_ratio_ok = aspect_ratio_ok(width, height, request.size)
                 if not result.ok:
+                    temporary_path.unlink(missing_ok=True)
                     result.error = "invalid_image_bytes"
+                    return result
+                output_path = output_dir / f"{output_name}{FORMAT_SUFFIXES[detected_format]}"
+                temporary_path.replace(output_path)
+                result.path = str(output_path)
                 return result
         except urllib.error.HTTPError as error:
             body = error.read().decode("utf-8", "replace")

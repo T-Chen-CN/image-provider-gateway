@@ -57,6 +57,7 @@ def test_batch_retries_only_failed(monkeypatch, tmp_path):
         requests,
         tmp_path,
         api_key="fake",
+        base_url="https://example.invalid",
         concurrency=2,
         retry=1,
         qa_enabled=False,

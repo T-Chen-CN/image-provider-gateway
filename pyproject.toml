@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "image-provider-gateway"
+version = "0.1.0"
+description = "Agent-friendly gateway for OpenAI-compatible image generation APIs"
+requires-python = ">=3.10"
+dependencies = ["Pillow>=10.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+image-provider-gateway = "image_provider_gateway.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
