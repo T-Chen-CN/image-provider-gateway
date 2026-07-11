@@ -1,0 +1,10 @@
+{
+  "default_provider": "example",
+  "providers": {
+    "example": {
+      "base_url": "https://your-openai-compatible-endpoint.example/v1",
+      "api_key": "sk-replace-me",
+      "default_model": "gpt-image-2"
+    }
+  }
+}

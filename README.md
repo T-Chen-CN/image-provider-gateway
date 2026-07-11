@@ -52,14 +52,83 @@ ACCEPTANCE_TESTS.md
 
 ## Runtime Configuration
 
-The gateway reads credentials and provider endpoint configuration at runtime.
+Credentials and endpoints resolve in this order (highest to lowest):
+
+1. Explicit CLI arguments (`--base-url`, `--api-key-env`).
+2. Environment variables (`IMAGE_API_KEY`, `IMAGE_API_BASE_URL`).
+3. Persisted config file (default `~/.config/image-provider-gateway/config.json`).
+
+### Option A: Environment variables (ephemeral)
 
 ```bash
 export IMAGE_API_KEY="<your-provider-api-key>"
 export IMAGE_API_BASE_URL="<your-provider-base-url>"
 ```
 
+### Option B: Persisted config file
+
+Use the `init` subcommand to save one or more provider entries. The file is written with owner-only permissions (`chmod 600`) and never committed.
+
+```bash
+# Interactive
+image-provider-gateway init
+
+# Non-interactive
+image-provider-gateway init \
+  --provider yunwu \
+  --base-url https://yunwu.example/v1 \
+  --api-key sk-... \
+  --default-model gpt-image-2 \
+  --set-default \
+  --non-interactive
+
+# Import from currently exported env vars
+image-provider-gateway init --provider yunwu --from-env --set-default --non-interactive
+
+# Feed key via stdin (safer than argv on shared shells)
+echo "sk-..." | image-provider-gateway init --provider yunwu \
+  --base-url https://yunwu.example/v1 --api-key-stdin \
+  --set-default --non-interactive
+```
+
+Inspect the config:
+
+```bash
+image-provider-gateway config list
+image-provider-gateway config show yunwu               # key is redacted
+image-provider-gateway config show yunwu --reveal       # print full key (avoid on shared terminals)
+image-provider-gateway config set-default other-provider
+image-provider-gateway config remove old-provider
+image-provider-gateway config path
+```
+
+Override the config location with `--config-file` or set `IMAGE_PROVIDER_GATEWAY_CONFIG=/path/to/config.json`.
+
 Do not commit real values. The repository intentionally contains no real provider URL or API key.
+
+## Structured Provider Errors
+
+Failed generations expose a stable `provider_error` object so agents can react without string-matching:
+
+```json
+{
+  "ok": false,
+  "error": "http_error",
+  "http_status": 400,
+  "provider_error": {
+    "code": "safety_violation",
+    "retryable": false,
+    "http_status": 400,
+    "message": "Your request was rejected by the safety system.",
+    "hint": "Provider safety filter rejected the prompt or reference image...",
+    "provider_raw": { "error": { "code": "moderation_blocked", "message": "..." } }
+  }
+}
+```
+
+Supported `code` values: `safety_violation`, `content_policy_violation`, `rate_limit`, `auth_failed`, `quota_exceeded`, `bad_request`, `model_not_found`, `server_error`, `timeout`, `network_error`, `provider_json_error`, `unknown`.
+
+The batch retry loop honours `retryable`: `rate_limit`, `server_error`, `timeout`, `network_error`, and `provider_json_error` are retried up to `--retry`; `safety_violation`, `auth_failed`, and `quota_exceeded` fail fast.
 
 ## Request Model
 
@@ -123,9 +192,11 @@ PYTHONPATH=. python3 -m image_provider_gateway.cli batch \
 
 You can also pass `--base-url` and `--api-key-env`, but environment variables are recommended for normal use.
 
-Supported `single` CLI options: `--prompt`, `--id`, `--size`, `--quality`, `--output-dir`, `--output-name`, `--model`, `--provider`, `--mode`, `--input-image`, `--qa-preset`, `--base-url`, `--api-key-env`, `--timeout`, and `--qa`.
+Supported `single` CLI options: `--prompt`, `--id`, `--size`, `--quality`, `--output-dir`, `--output-name`, `--model`, `--provider-type`, `--mode`, `--input-image`, `--qa-preset`, `--provider`, `--config-file`, `--base-url`, `--api-key-env`, `--timeout`, and `--qa`.
 
-Supported `batch` CLI options: `--requests`, `--output-dir`, `--concurrency`, `--retry`, `--base-url`, `--api-key-env`, `--timeout`, `--job-id`, and `--no-qa`.
+Supported `batch` CLI options: `--requests`, `--output-dir`, `--concurrency`, `--retry`, `--provider`, `--config-file`, `--base-url`, `--api-key-env`, `--timeout`, `--job-id`, and `--no-qa`.
+
+Additional subcommands: `init` (persist a provider entry), `config list`, `config show <provider>`, `config set-default <provider>`, `config remove <provider>`, `config path`.
 
 ## Output Layout
 
