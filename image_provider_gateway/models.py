@@ -34,6 +34,7 @@ class QaResult:
     issues: list[QaIssue] = field(default_factory=list)
     note: str | None = None
     preset: str | None = None
+    qa_error: str | None = None
 
 
 @dataclass(slots=True)
@@ -65,7 +66,8 @@ class BatchResult:
     results: list[ImageResult]
     manifest_path: Path
     events_path: Path
+    write_errors: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return all(result.ok for result in self.results)
+        return all(result.ok for result in self.results) and not self.write_errors

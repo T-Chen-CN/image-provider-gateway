@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
+import traceback
 from pathlib import Path
 
 from .gateway import generate_image, generate_images_batch
@@ -11,7 +11,30 @@ from .manifest import dataclass_to_dict
 from .models import ImageRequest
 
 
+def _fail(error: str, message: str, debug: bool = False) -> int:
+    payload = {"ok": False, "error": error, "message": message}
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
+    if debug:
+        traceback.print_exc()
+    return 2
+
+
 def main() -> int:
+    try:
+        return _main()
+    except SystemExit:
+        raise
+    except FileNotFoundError as error:
+        return _fail("file_not_found", str(error), debug=os.environ.get("IPG_DEBUG") == "1")
+    except json.JSONDecodeError as error:
+        return _fail("invalid_requests_json", str(error), debug=os.environ.get("IPG_DEBUG") == "1")
+    except (TypeError, ValueError) as error:
+        return _fail("invalid_input", str(error), debug=os.environ.get("IPG_DEBUG") == "1")
+    except Exception as error:  # last-resort structured wrapper
+        return _fail("internal_error", f"{type(error).__name__}: {error}", debug=os.environ.get("IPG_DEBUG") == "1")
+
+
+def _main() -> int:
     parser = argparse.ArgumentParser(description="Agent-friendly image provider gateway")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -46,11 +69,9 @@ def main() -> int:
     args = parser.parse_args()
     api_key = os.environ.get(args.api_key_env)
     if not api_key:
-        print(json.dumps({"ok": False, "error": f"{args.api_key_env} is required"}, ensure_ascii=False), file=sys.stderr)
-        return 2
+        return _fail("missing_api_key", f"{args.api_key_env} is required")
     if not args.base_url and not os.environ.get("IMAGE_API_BASE_URL"):
-        print(json.dumps({"ok": False, "error": "IMAGE_API_BASE_URL is required"}, ensure_ascii=False), file=sys.stderr)
-        return 2
+        return _fail("missing_base_url", "IMAGE_API_BASE_URL is required")
 
     if args.command == "single":
         request = ImageRequest(
@@ -77,7 +98,12 @@ def main() -> int:
         return 0 if result.ok else 1
 
     request_data = json.loads(Path(args.requests).read_text(encoding="utf-8"))
-    requests = [ImageRequest(**item) for item in request_data]
+    if not isinstance(request_data, list):
+        return _fail("invalid_requests_json", "top-level JSON must be a list of image requests")
+    try:
+        requests = [ImageRequest(**item) for item in request_data]
+    except TypeError as error:
+        return _fail("invalid_request_fields", str(error))
     result = generate_images_batch(
         requests,
         Path(args.output_dir),

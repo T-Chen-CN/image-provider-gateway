@@ -15,6 +15,10 @@ test = ["pytest>=8"]
 [project.scripts]
 image-provider-gateway = "image_provider_gateway.cli:main"
 
+[tool.setuptools.packages.find]
+include = ["image_provider_gateway*"]
+exclude = ["qa_presets*", "tests*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

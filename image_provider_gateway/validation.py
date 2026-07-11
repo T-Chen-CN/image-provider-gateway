@@ -42,3 +42,12 @@ def validate_batch_requests(requests: list[ImageRequest]) -> None:
     ids = [request.id for request in requests]
     if len(ids) != len(set(ids)):
         raise ValueError("request ids must be unique")
+    seen: dict[str, str] = {}
+    for request in requests:
+        basename = request.output_name or request.id
+        if basename in seen:
+            raise ValueError(
+                f"output basename must be unique across a batch: {basename!r} used by ids "
+                f"{seen[basename]!r} and {request.id!r}"
+            )
+        seen[basename] = request.id

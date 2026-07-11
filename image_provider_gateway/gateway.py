@@ -13,6 +13,39 @@ from .qa_check import qa_check_image
 from .validation import validate_batch_requests, validate_request, validate_safe_name
 
 
+def _safe_qa(result: ImageResult, preset: str | None) -> QaResult:
+    try:
+        return qa_check_image(result, preset=preset)
+    except Exception as error:  # QA must never abort the batch.
+        return QaResult(status="not_checked", preset=preset, qa_error=f"{type(error).__name__}: {error}")
+
+
+def _safe_emit(logger: EventLogger, event: str, **payload) -> str | None:
+    try:
+        logger.emit(event, **payload)
+        return None
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
+
+
+def _safe_write_json(path: Path, data) -> str | None:
+    try:
+        write_json(path, data)
+        return None
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
+
+
+def _preflight_output_dir(root: Path) -> None:
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        probe = root / ".write_probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as error:
+        raise OSError(f"output_dir is not writable: {root} ({type(error).__name__}: {error})") from error
+
+
 RETRYABLE_ERRORS = {
     "http_error",
     "missing_b64_json",
@@ -37,7 +70,7 @@ def generate_image(
     provider = _provider_for(request, api_key=api_key, base_url=base_url, timeout_seconds=timeout_seconds)
     result = provider.generate(request, Path(output_dir))
     if result.ok and qa_enabled:
-        result.qa = qa_check_image(result, preset=request.qa_preset)
+        result.qa = _safe_qa(result, request.qa_preset)
     return result
 
 
@@ -59,11 +92,15 @@ def generate_images_batch(
     job_id = job_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
     validate_safe_name(job_id, "job_id")
     root = Path(output_dir) / job_id
+    _preflight_output_dir(root)
     images_dir = root / "images"
     events_path = root / "events.jsonl"
     manifest_path = root / "manifest.json"
     logger = EventLogger(events_path)
-    logger.emit("batch_started", job_id=job_id, count=len(requests), concurrency=concurrency, retry=retry)
+    write_errors: list[str] = []
+    err = _safe_emit(logger, "batch_started", job_id=job_id, count=len(requests), concurrency=concurrency, retry=retry)
+    if err:
+        write_errors.append(err)
 
     pending = list(requests)
     successful: dict[str, ImageResult] = {}
@@ -75,7 +112,9 @@ def generate_images_batch(
         if not pending:
             break
         event_name = "round_started" if attempt == 1 else "retry_started"
-        logger.emit(event_name, attempt=attempt, count=len(pending))
+        err = _safe_emit(logger, event_name, attempt=attempt, count=len(pending))
+        if err:
+            write_errors.append(err)
         round_results = _run_round(
             pending,
             images_dir,
@@ -91,34 +130,47 @@ def generate_images_batch(
             request = next(item for item in requests if item.id == result.id)
             if result.ok:
                 if qa_enabled:
-                    result.qa = qa_check_image(result, preset=request.qa_preset)
+                    result.qa = _safe_qa(result, request.qa_preset)
                 successful[result.id] = result
-                logger.emit("image_succeeded", result=result)
-                if result.qa.status in {"warning", "severe_warning"}:
-                    logger.emit("qa_warning", result=result)
+                _safe_emit(logger, "image_succeeded", result=result)
+                if result.qa.qa_error:
+                    _safe_emit(logger, "qa_error", result=result)
+                elif result.qa.status in {"warning", "severe_warning"}:
+                    _safe_emit(logger, "qa_warning", result=result)
                 continue
-            logger.emit("image_failed", result=result)
+            _safe_emit(logger, "image_failed", result=result)
             if attempt <= retry and _is_retryable(result):
                 pending.append(request)
             else:
                 final_failures[result.id] = result
-        logger.emit(
+        err = _safe_emit(
+            logger,
             "round_completed",
             attempt=attempt,
             success_count=len(successful),
             failed_count=len(final_failures),
             retry_pending_count=len(pending),
         )
-        write_json(manifest_path, _manifest(job_id, requests, successful, final_failures, pending, all_attempts))
+        if err:
+            write_errors.append(err)
+        err = _safe_write_json(manifest_path, _manifest(job_id, requests, successful, final_failures, pending, all_attempts))
+        if err:
+            write_errors.append(err)
         if attempt == 1:
-            logger.emit("partial_delivery_ready", success_count=len(successful), retry_pending_count=len(pending))
+            err = _safe_emit(logger, "partial_delivery_ready", success_count=len(successful), retry_pending_count=len(pending))
+            if err:
+                write_errors.append(err)
 
     ordered_results = []
     for request in requests:
         ordered_results.append(successful.get(request.id) or final_failures.get(request.id) or _pending_result(request))
-    logger.emit("batch_completed", ok=all(result.ok for result in ordered_results), success_count=sum(1 for result in ordered_results if result.ok))
-    write_json(manifest_path, _manifest(job_id, requests, successful, final_failures, [], all_attempts))
-    return BatchResult(job_id=job_id, output_dir=root, results=ordered_results, manifest_path=manifest_path, events_path=events_path)
+    err = _safe_emit(logger, "batch_completed", ok=all(result.ok for result in ordered_results), success_count=sum(1 for result in ordered_results if result.ok), write_errors=write_errors or None)
+    if err:
+        write_errors.append(err)
+    err = _safe_write_json(manifest_path, _manifest(job_id, requests, successful, final_failures, [], all_attempts, write_errors))
+    if err:
+        write_errors.append(err)
+    return BatchResult(job_id=job_id, output_dir=root, results=ordered_results, manifest_path=manifest_path, events_path=events_path, write_errors=list(write_errors))
 
 
 def _validate_positive_int(value: object, field_name: str) -> None:
@@ -238,6 +290,7 @@ def _manifest(
     final_failures: dict[str, ImageResult],
     retry_pending: list[ImageRequest],
     all_attempts: list[ImageResult],
+    write_errors: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "job_id": job_id,
@@ -245,4 +298,5 @@ def _manifest(
         "results": [successful.get(request.id) or final_failures.get(request.id) or _pending_result(request) for request in requests],
         "retry_pending_ids": [request.id for request in retry_pending],
         "attempts": all_attempts,
+        "write_errors": list(write_errors) if write_errors else [],
     }
