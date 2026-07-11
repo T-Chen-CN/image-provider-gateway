@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ..errors import classify_http_error, classify_transport_error
 from ..image_probe import aspect_ratio_ok, detect_image
 from ..models import ImageRequest, ImageResult
 
@@ -150,9 +151,11 @@ class OpenAIImagesProvider:
                 result.elapsed_seconds = round(time.time() - started_at, 2)
                 try:
                     data = json.loads(raw)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as parse_error:
+                    classified = classify_transport_error("provider_json_error", parse_error)
+                    classified.provider_raw = {"raw_preview": raw[:2000]}
                     result.error = "provider_json_error"
-                    result.provider_error = {"raw_preview": raw[:2000]}
+                    result.provider_error = classified.to_dict()
                     return result
                 first = (data.get("data") or [{}])[0]
                 b64_json = first.get("b64_json") or data.get("b64_json")
@@ -187,18 +190,28 @@ class OpenAIImagesProvider:
             body = error.read().decode("utf-8", "replace")
             result.http_status = error.code
             result.elapsed_seconds = round(time.time() - started_at, 2)
+            raw_error = _parse_provider_error(body)
+            classified = classify_http_error(error.code, raw_error, body_text=body)
             result.error = "http_error"
-            result.provider_error = _parse_provider_error(body)
+            result.provider_error = classified.to_dict()
             return result
         except TimeoutError as error:
             result.elapsed_seconds = round(time.time() - started_at, 2)
+            classified = classify_transport_error("timeout", error)
             result.error = "timeout"
-            result.provider_error = {"message": repr(error)}
+            result.provider_error = classified.to_dict()
+            return result
+        except urllib.error.URLError as error:
+            result.elapsed_seconds = round(time.time() - started_at, 2)
+            classified = classify_transport_error("network", error)
+            result.error = "URLError"
+            result.provider_error = classified.to_dict()
             return result
         except Exception as error:  # noqa: BLE001 - Provider boundary must capture all task-level failures.
             result.elapsed_seconds = round(time.time() - started_at, 2)
+            classified = classify_transport_error("unknown", error)
             result.error = type(error).__name__
-            result.provider_error = {"message": repr(error)}
+            result.provider_error = classified.to_dict()
             return result
 
 
