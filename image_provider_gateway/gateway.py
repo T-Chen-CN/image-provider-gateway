@@ -57,6 +57,16 @@ RETRYABLE_ERRORS = {
 }
 
 
+def _is_retryable(result: ImageResult) -> bool:
+    """Prefer the classifier's explicit retryable flag; fall back to legacy set."""
+    provider_error = result.provider_error or {}
+    if isinstance(provider_error, dict) and "retryable" in provider_error:
+        return bool(provider_error["retryable"])
+    if result.http_status in {408, 409, 425, 429, 500, 502, 503, 504}:
+        return True
+    return result.error in RETRYABLE_ERRORS
+
+
 def generate_image(
     request: ImageRequest,
     output_dir: Path | str,
@@ -262,12 +272,6 @@ def _provider_for(request: ImageRequest, api_key: str | None, base_url: str | No
     if not resolved_base_url:
         raise ValueError("IMAGE_API_BASE_URL is required")
     return OpenAIImagesProvider(api_key=key, base_url=resolved_base_url, timeout_seconds=timeout_seconds)
-
-
-def _is_retryable(result: ImageResult) -> bool:
-    if result.http_status in {408, 409, 425, 429, 500, 502, 503, 504}:
-        return True
-    return result.error in RETRYABLE_ERRORS
 
 
 def _pending_result(request: ImageRequest) -> ImageResult:
